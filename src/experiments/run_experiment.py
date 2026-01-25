@@ -50,23 +50,78 @@ def _make_dimred(dimred: str, d: int, seed: int,
             n_neighbors=umap_n_neighbors,
             min_dist=umap_min_dist,
             metric=umap_metric,
-            random_state=None,
+            random_state=None,  # để chạy parallel, tránh warning do seed
             n_jobs=-1
         )
-    #print("UMAP params:", model.get_params().get("random_state"), model.get_params().get("n_jobs")) -> để xem lỗi ở umap nếu n_jobs k đạt -1 
+
     raise ValueError(f"Unknown dimred: {dimred}")
 
 
-def _plot_metric_vs_d(df_sum: pd.DataFrame, dataset: str, dimred: str, metric: str, out_path: Path):
+"""def _plot_metric_vs_d(df_sum: pd.DataFrame, dataset: str, dimred: str, metric: str, out_path: Path):
     sub = df_sum[(df_sum["dataset"] == dataset) & (df_sum["dimred"] == dimred)].sort_values("d")
     plt.figure()
     plt.plot(sub["d"], sub[f"{metric}_mean"], marker="o")
     plt.xlabel("Reduced dimension d")
     plt.ylabel(metric)
-    plt.title(f"{dataset.upper()} + {dimred.upper()} : {metric} vs d")
+    plt.title(f"{metric}: {dataset.upper()} and {dimred.upper()} on each reduced dimension d")
     plt.tight_layout()
     plt.savefig(out_path, dpi=200)
     plt.close()
+    (Nếu muốn lấy từng file ảnh riêng thì sử dụng)"""
+
+
+def plot_all_subplots(df_sum: pd.DataFrame, out_path: Path):
+    """
+    1 figure lớn:
+    - Cột: mỗi dataset
+    - Hàng: mỗi metric
+    - Trong mỗi ô: các đường theo dimred (PCA/UMAP) theo d
+    """
+    metrics = ["silhouette", "ari", "nmi", "time_total_sec"]
+    datasets = sorted(df_sum["dataset"].unique().tolist())
+    dimreds = sorted(df_sum["dimred"].unique().tolist())
+
+    nrows = len(metrics)
+    ncols = len(datasets)
+
+    fig, axes = plt.subplots(
+        nrows=nrows,
+        ncols=ncols,
+        figsize=(5.0 * ncols, 3.4 * nrows),
+        sharex=False,
+        sharey=False
+    )
+
+    # normalize axes to 2D array
+    if nrows == 1 and ncols == 1:
+        axes = [[axes]]
+    elif nrows == 1:
+        axes = [axes]
+    elif ncols == 1:
+        axes = [[ax] for ax in axes]
+
+    for r, metric in enumerate(metrics):
+        for c, dataset in enumerate(datasets):
+            ax = axes[r][c]
+
+            for dimred in dimreds:
+                sub = df_sum[(df_sum["dataset"] == dataset) & (df_sum["dimred"] == dimred)].sort_values("d")
+                if sub.empty:
+                    continue
+                ax.plot(sub["d"], sub[f"{metric}_mean"], marker="o", label=dimred.upper())
+
+            ax.set_title(f"{dataset} | {metric}")
+            ax.set_xlabel("d")
+            ax.set_ylabel(metric)
+            ax.grid(True, alpha=0.3)
+
+            if r == 0 and c == 0:
+                ax.legend()
+
+    fig.suptitle("PCA and UMAP on KMeans algorithms: Metrics and Reduced Dimension d", fontsize=14)
+    fig.tight_layout(rect=[0, 0, 1, 0.96])
+    fig.savefig(out_path, dpi=250)
+    plt.close(fig)
 
 
 def run_one(dataset: str, dimred: str, n_samples: int, d: int, n_clusters: int,
@@ -169,6 +224,10 @@ def run_all_sweeps(cfgs, out_dir: Path):
     })
     df_sum.to_csv(out_dir / "results_summary.csv", index=False)
 
+    #1 plot to chứa tất cả subplot
+    plot_all_subplots(df_sum, out_dir / "figures" / "ALL_PLOTS_SUBPLOTS.png")
+
+    """
     for (dataset, dimred) in df_sum[["dataset", "dimred"]].drop_duplicates().itertuples(index=False):
         for metric in ["silhouette", "ari", "nmi", "time_total_sec"]:
             _plot_metric_vs_d(
@@ -178,5 +237,7 @@ def run_all_sweeps(cfgs, out_dir: Path):
                 metric=metric,
                 out_path=out_dir / "figures" / f"{dataset}_{dimred}_{metric}_vs_d.png"
             )
+    (Nếu vẫn muốn xuất từng plot riêng thì bật lại đoạn trên)
+    """
 
     return df_detail, df_sum

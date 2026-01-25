@@ -19,7 +19,7 @@ def main():
     print(f"Saved summary: {out_dir / 'results_summary.csv'}")
     print(f"Figures: {out_dir / 'figures'}")
     end = time.time()
-    print(end - start)
+    print(f"Thời gian hoạt động:{round((end - start)/60,3)}")
 
 if __name__ == "__main__":
     main()
