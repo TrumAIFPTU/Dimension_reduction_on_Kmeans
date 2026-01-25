@@ -53,7 +53,7 @@ def _make_dimred(dimred: str, d: int, seed: int,
             random_state=None,
             n_jobs=-1
         )
-    #print("UMAP params:", model.get_params().get("random_state"), model.get_params().get("n_jobs")) 
+    #print("UMAP params:", model.get_params().get("random_state"), model.get_params().get("n_jobs")) -> để xem lỗi ở umap nếu n_jobs k đạt -1 
     raise ValueError(f"Unknown dimred: {dimred}")
 
 
