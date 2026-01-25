@@ -109,9 +109,16 @@ def plot_all_subplots(df_sum: pd.DataFrame, out_path: Path):
                 if sub.empty:
                     continue
                 ax.plot(sub["d"], sub[f"{metric}_mean"], marker="o", label=dimred.upper())
-
+            if dataset == "blobs_linear":
+                dataset = "linear"
+            elif dataset == "fashion_mnist":
+                dataset = "nlinearmed"
+            elif dataset == "mnist":
+                dataset = "nlinearlow"
+            elif dataset == "swiss_roll":
+                dataset = "nlinearhigh"
             ax.set_title(f"{dataset} | {metric}")
-            ax.set_xlabel("d")
+            ax.set_xlabel("dimension")
             ax.set_ylabel(metric)
             ax.grid(True, alpha=0.3)
 
