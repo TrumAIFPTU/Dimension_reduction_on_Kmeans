@@ -4,20 +4,38 @@ import matplotlib.pyplot as plt
 
 from src.utils.seed import set_seed
 from src.datasets.mnist import load_mnist
+from src.datasets.fashion_mnist import load_fashion_mnist
 from src.datasets.swiss_roll import load_swiss_roll
+from src.datasets.blobs_linear import load_blobs_linear
+
 from src.dimred.pca import make_pca
-from src.dimred.umap import make_umap   # ✅ đổi tsne -> umap
+from src.dimred.umap import make_umap
 from src.clustering.kmeans import make_kmeans
 from src.evaluation.metrics import compute_metrics
 from src.evaluation.timer import timer
-from src.utils.io import save_results_csv
 
 
-def _load_dataset(dataset: str, n_samples: int, n_clusters: int, seed: int):
+def _load_dataset(dataset: str, n_samples: int, n_clusters: int, seed: int,
+                  blobs_n_features: int = 50, blobs_cluster_std: float = 1.0):
     if dataset == "mnist":
         return load_mnist(n_samples, seed)
+
+    if dataset == "fashion_mnist":
+        return load_fashion_mnist(n_samples, seed)
+
     if dataset == "swiss_roll":
+        # y_true được tạo bằng binning (0..K-1)
         return load_swiss_roll(n_samples, n_clusters, seed)
+
+    if dataset == "blobs_linear":
+        return load_blobs_linear(
+            n_samples=n_samples,
+            n_features=blobs_n_features,
+            n_clusters=n_clusters,
+            random_state=seed,
+            cluster_std=blobs_cluster_std
+        )
+
     raise ValueError(f"Unknown dataset: {dataset}")
 
 
@@ -25,6 +43,7 @@ def _make_dimred(dimred: str, d: int, seed: int,
                  umap_n_neighbors: int, umap_min_dist: float, umap_metric: str):
     if dimred == "pca":
         return make_pca(d, seed)
+
     if dimred == "umap":
         return make_umap(
             n_components=d,
@@ -34,6 +53,7 @@ def _make_dimred(dimred: str, d: int, seed: int,
             random_state=None,
             n_jobs=-1
         )
+    #print("UMAP params:", model.get_params().get("random_state"), model.get_params().get("n_jobs")) 
     raise ValueError(f"Unknown dimred: {dimred}")
 
 
@@ -50,9 +70,19 @@ def _plot_metric_vs_d(df_sum: pd.DataFrame, dataset: str, dimred: str, metric: s
 
 
 def run_one(dataset: str, dimred: str, n_samples: int, d: int, n_clusters: int,
-            seed: int, umap_n_neighbors: int, umap_min_dist: float, umap_metric: str):
+            seed: int,
+            umap_n_neighbors: int, umap_min_dist: float, umap_metric: str,
+            blobs_n_features: int, blobs_cluster_std: float):
     set_seed(seed)
-    X, y_true = _load_dataset(dataset, n_samples, n_clusters, seed)
+
+    X, y_true = _load_dataset(
+        dataset=dataset,
+        n_samples=n_samples,
+        n_clusters=n_clusters,
+        seed=seed,
+        blobs_n_features=blobs_n_features,
+        blobs_cluster_std=blobs_cluster_std
+    )
 
     dr = _make_dimred(dimred, d, seed, umap_n_neighbors, umap_min_dist, umap_metric)
     km = make_kmeans(n_clusters, seed)
@@ -86,15 +116,20 @@ def run_one(dataset: str, dimred: str, n_samples: int, d: int, n_clusters: int,
 
 def run_all_sweeps(cfgs, out_dir: Path):
     rows = []
+    (out_dir / "figures").mkdir(parents=True, exist_ok=True)
 
-    # 1) Detail runs
     for cfg in cfgs:
-        # Lọc dims hợp lệ theo dữ liệu (quan trọng cho PCA: d <= n_features)
-        X0, _ = _load_dataset(cfg.dataset, cfg.n_samples, cfg.n_clusters, cfg.seeds[0])
+        # Lọc dims hợp lệ cho PCA: d <= min(n_samples, n_features)
+        X0, _ = _load_dataset(
+            dataset=cfg.dataset,
+            n_samples=cfg.n_samples,
+            n_clusters=cfg.n_clusters,
+            seed=cfg.seeds[0],
+            blobs_n_features=cfg.blobs_n_features,
+            blobs_cluster_std=cfg.blobs_cluster_std
+        )
         max_d = min(X0.shape[0], X0.shape[1])
         dims = [d for d in cfg.dims if d <= max_d]
-
-        #UMAP không cần giới hạn d<4 như t-SNE nên bỏ phần đó
 
         for d in dims:
             for seed in cfg.seeds:
@@ -109,13 +144,14 @@ def run_all_sweeps(cfgs, out_dir: Path):
                         umap_n_neighbors=cfg.umap_n_neighbors,
                         umap_min_dist=cfg.umap_min_dist,
                         umap_metric=cfg.umap_metric,
+                        blobs_n_features=cfg.blobs_n_features,
+                        blobs_cluster_std=cfg.blobs_cluster_std
                     )
                 )
 
     df_detail = pd.DataFrame(rows)
     df_detail.to_csv(out_dir / "results_detail.csv", index=False)
 
-    # 2) Summary mean/std over seeds
     agg_cols = ["silhouette", "ari", "nmi", "time_total_sec", "time_dimred_sec", "time_kmeans_sec"]
     df_sum = (
         df_detail
@@ -123,11 +159,7 @@ def run_all_sweeps(cfgs, out_dir: Path):
         .agg(["mean", "std"])
     )
 
-    # flatten columns
-    df_sum.columns = [
-        f"{a}_{b}" if b else a
-        for (a, b) in df_sum.columns.to_flat_index()
-    ]
+    df_sum.columns = [f"{a}_{b}" if b else a for (a, b) in df_sum.columns.to_flat_index()]
     df_sum = df_sum.rename(columns={
         "dataset_": "dataset",
         "dimred_": "dimred",
@@ -137,7 +169,6 @@ def run_all_sweeps(cfgs, out_dir: Path):
     })
     df_sum.to_csv(out_dir / "results_summary.csv", index=False)
 
-    # 3) Plot metrics vs d
     for (dataset, dimred) in df_sum[["dataset", "dimred"]].drop_duplicates().itertuples(index=False):
         for metric in ["silhouette", "ari", "nmi", "time_total_sec"]:
             _plot_metric_vs_d(
