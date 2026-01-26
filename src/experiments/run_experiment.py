@@ -56,8 +56,8 @@ def _make_dimred(dimred: str, d: int, seed: int,
 
     raise ValueError(f"Unknown dimred: {dimred}")
 
-
-"""def _plot_metric_vs_d(df_sum: pd.DataFrame, dataset: str, dimred: str, metric: str, out_path: Path):
+"""
+def _plot_metric_vs_d(df_sum: pd.DataFrame, dataset: str, dimred: str, metric: str, out_path: Path):
     sub = df_sum[(df_sum["dataset"] == dataset) & (df_sum["dimred"] == dimred)].sort_values("d")
     plt.figure()
     plt.plot(sub["d"], sub[f"{metric}_mean"], marker="o")
@@ -67,7 +67,10 @@ def _make_dimred(dimred: str, d: int, seed: int,
     plt.tight_layout()
     plt.savefig(out_path, dpi=200)
     plt.close()
-    (Nếu muốn lấy từng file ảnh riêng thì sử dụng)"""
+    Nếu vẫn muốn xuất từng plot riêng thì bỏ comment đoạn này
+
+"""
+# ================================================================================================================
 
 
 def plot_all_subplots(df_sum: pd.DataFrame, out_path: Path):
@@ -109,15 +112,17 @@ def plot_all_subplots(df_sum: pd.DataFrame, out_path: Path):
                 if sub.empty:
                     continue
                 ax.plot(sub["d"], sub[f"{metric}_mean"], marker="o", label=dimred.upper())
+            display_name = dataset
             if dataset == "blobs_linear":
-                dataset = "linear"
+                display_name = "linear"
             elif dataset == "fashion_mnist":
-                dataset = "nlinearmed"
+                display_name = "nlinearmed"
             elif dataset == "mnist":
-                dataset = "nlinearlow"
+                display_name = "nlinearlow"
             elif dataset == "swiss_roll":
-                dataset = "nlinearhigh"
-            ax.set_title(f"{dataset} | {metric}")
+                display_name = "nlinearhigh"
+
+            ax.set_title(f"{display_name} | {metric}")
             ax.set_xlabel("dimension")
             ax.set_ylabel(metric)
             ax.grid(True, alpha=0.3)
@@ -126,6 +131,101 @@ def plot_all_subplots(df_sum: pd.DataFrame, out_path: Path):
                 ax.legend()
 
     fig.suptitle("PCA and UMAP on KMeans algorithms: Metrics and Reduced Dimension d", fontsize=14)
+    fig.tight_layout(rect=[0, 0, 1, 0.96])
+    fig.savefig(out_path, dpi=250)
+    plt.close(fig)
+
+
+def plot_cluster_scatter_4datasets(
+    out_path: Path,
+    datasets=("blobs_linear", "mnist", "fashion_mnist", "swiss_roll"),
+    n_samples_map=None,
+    n_clusters_map=None,
+    seed: int = 42,
+    # UMAP params
+    umap_n_neighbors: int = 15,
+    umap_min_dist: float = 0.1,
+    umap_metric: str = "euclidean",
+    # Blobs params
+    blobs_n_features: int = 50,
+    blobs_cluster_std: float = 1.0,
+):
+    """
+    Vẽ scatter phân cụm KMeans sau PCA/UMAP cho 4 dataset.
+    Layout: rows = datasets, cols = [PCA, UMAP]
+    Mỗi ô: màu theo nhãn KMeans (y_pred).
+    """
+    if n_samples_map is None:
+        n_samples_map = {
+            "blobs_linear": 4000,
+            "mnist": 4000,
+            "fashion_mnist": 4000,
+            "swiss_roll": 4000,
+        }
+    if n_clusters_map is None:
+        n_clusters_map = {
+            "blobs_linear": 10,
+            "mnist": 10,
+            "fashion_mnist": 10,
+            "swiss_roll": 10,
+        }
+
+    methods = ["pca", "umap"]
+    nrows = len(datasets)
+    ncols = len(methods)
+
+    fig, axes = plt.subplots(nrows=nrows, ncols=ncols, figsize=(6.2 * ncols, 4.2 * nrows))
+
+    # normalize axes to 2D
+    if nrows == 1 and ncols == 1:
+        axes = [[axes]]
+    elif nrows == 1:
+        axes = [axes]
+    elif ncols == 1:
+        axes = [[ax] for ax in axes]
+
+    for r, ds in enumerate(datasets):
+        n_samples = int(n_samples_map.get(ds, 4000))
+        n_clusters = int(n_clusters_map.get(ds, 10))
+
+        X, _y_true = _load_dataset(
+            dataset=ds,
+            n_samples=n_samples,
+            n_clusters=n_clusters,
+            seed=seed,
+            blobs_n_features=blobs_n_features,
+            blobs_cluster_std=blobs_cluster_std
+        )
+
+        for c, dimred in enumerate(methods):
+            ax = axes[r][c]
+
+            # reduce to 2D for plotting
+            if dimred == "pca":
+                dr = make_pca(2, seed)
+            else:
+                dr = make_umap(
+                    n_components=2,
+                    n_neighbors=umap_n_neighbors,
+                    min_dist=umap_min_dist,
+                    metric=umap_metric,
+                    random_state=None,
+                    n_jobs=-1
+                )
+
+            X_2d = dr.fit_transform(X)
+
+            # cluster on 2D embedding (giảm chiều rồi mới KMeans)
+            km = make_kmeans(n_clusters, seed)
+            y_pred = km.fit_predict(X_2d)
+
+            ax.scatter(X_2d[:, 0], X_2d[:, 1], s=6, c=y_pred, alpha=0.85)
+            ax.set_title(f"{ds} | {dimred.upper()} -> KMeans (k={n_clusters})")
+            ax.set_xticks([])
+            ax.set_yticks([])
+            ax.grid(True, alpha=0.15)
+
+    fig.suptitle("Cluster visualization after PCA/UMAP (2D) + KMeans", fontsize=14)
     fig.tight_layout(rect=[0, 0, 1, 0.96])
     fig.savefig(out_path, dpi=250)
     plt.close(fig)
@@ -231,8 +331,11 @@ def run_all_sweeps(cfgs, out_dir: Path):
     })
     df_sum.to_csv(out_dir / "results_summary.csv", index=False)
 
-    #1 plot to chứa tất cả subplot
+    #Plot tổng hợp metrics vs d (1 file)
     plot_all_subplots(df_sum, out_dir / "figures" / "ALL_PLOTS_SUBPLOTS.png")
+
+    #Plot scatter phân cụm sau PCA/UMAP cho 4 dataset (1 file)
+    plot_cluster_scatter_4datasets(out_dir / "figures" / "CLUSTERS_4DATASETS_PCA_UMAP.png")
 
     """
     for (dataset, dimred) in df_sum[["dataset", "dimred"]].drop_duplicates().itertuples(index=False):
@@ -244,7 +347,7 @@ def run_all_sweeps(cfgs, out_dir: Path):
                 metric=metric,
                 out_path=out_dir / "figures" / f"{dataset}_{dimred}_{metric}_vs_d.png"
             )
-    (Nếu vẫn muốn xuất từng plot riêng thì bật lại đoạn trên)
+    Nếu vẫn muốn xuất từng plot riêng thì bỏ comment đoạn này
     """
 
     return df_detail, df_sum

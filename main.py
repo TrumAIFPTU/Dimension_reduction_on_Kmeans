@@ -4,6 +4,7 @@ from src.experiments.run_experiment import run_all_sweeps
 import time
 
 def main():
+    print("Mô hình bắt đầu chạy.")
     start = time.time()
     out_dir = Path("outputs")
     (out_dir / "figures").mkdir(parents=True, exist_ok=True)
