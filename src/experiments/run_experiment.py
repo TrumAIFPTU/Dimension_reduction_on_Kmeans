@@ -151,9 +151,10 @@ def plot_cluster_scatter_4datasets(
     blobs_cluster_std: float = 1.0,
 ):
     """
-    Vẽ scatter phân cụm KMeans sau PCA/UMAP cho 4 dataset.
-    Layout: rows = datasets, cols = [PCA, UMAP]
-    Mỗi ô: màu theo nhãn KMeans (y_pred).
+    Vẽ scatter 3 cột cho mỗi dataset:
+    [Ground Truth | PCA -> KMeans | UMAP -> KMeans]
+    - Giảm chiều về 2D để vẽ.
+    - Cột 1 tô theo y_true, cột 2-3 tô theo y_pred (KMeans).
     """
     if n_samples_map is None:
         n_samples_map = {
@@ -170,9 +171,9 @@ def plot_cluster_scatter_4datasets(
             "swiss_roll": 10,
         }
 
-    methods = ["pca", "umap"]
+    cols = ["GT", "PCA+KMeans", "UMAP+KMeans"]
     nrows = len(datasets)
-    ncols = len(methods)
+    ncols = len(cols)
 
     fig, axes = plt.subplots(nrows=nrows, ncols=ncols, figsize=(6.2 * ncols, 4.2 * nrows))
 
@@ -188,7 +189,8 @@ def plot_cluster_scatter_4datasets(
         n_samples = int(n_samples_map.get(ds, 4000))
         n_clusters = int(n_clusters_map.get(ds, 10))
 
-        X, _y_true = _load_dataset(
+        # Load data
+        X, y_true = _load_dataset(
             dataset=ds,
             n_samples=n_samples,
             n_clusters=n_clusters,
@@ -197,35 +199,46 @@ def plot_cluster_scatter_4datasets(
             blobs_cluster_std=blobs_cluster_std
         )
 
-        for c, dimred in enumerate(methods):
-            ax = axes[r][c]
+        # 2D embeddings (để GT cũng vẽ trên cùng “mặt phẳng” so sánh được)
+        pca2 = make_pca(2, seed).fit_transform(X)
+        umap2 = make_umap(
+            n_components=2,
+            n_neighbors=umap_n_neighbors,
+            min_dist=umap_min_dist,
+            metric=umap_metric,
+            random_state=None,
+            n_jobs=-1
+        ).fit_transform(X)
 
-            # reduce to 2D for plotting
-            if dimred == "pca":
-                dr = make_pca(2, seed)
-            else:
-                dr = make_umap(
-                    n_components=2,
-                    n_neighbors=umap_n_neighbors,
-                    min_dist=umap_min_dist,
-                    metric=umap_metric,
-                    random_state=None,
-                    n_jobs=-1
-                )
+        # KMeans trên từng embedding
+        y_pred_pca = make_kmeans(n_clusters, seed).fit_predict(pca2)
+        y_pred_umap = make_kmeans(n_clusters, seed).fit_predict(umap2)
 
-            X_2d = dr.fit_transform(X)
+        # --- Col 1: Ground Truth (vẽ trên PCA space cho dễ so sánh) ---
+        ax = axes[r][0]
+        ax.scatter(pca2[:, 0], pca2[:, 1], s=6, c=y_true, alpha=0.85)
+        ax.set_title(f"{ds} | GT (on PCA 2D)")
+        ax.set_xticks([])
+        ax.set_yticks([])
+        ax.grid(True, alpha=0.15)
 
-            # cluster on 2D embedding (giảm chiều rồi mới KMeans)
-            km = make_kmeans(n_clusters, seed)
-            y_pred = km.fit_predict(X_2d)
+        # --- Col 2: PCA + KMeans ---
+        ax = axes[r][1]
+        ax.scatter(pca2[:, 0], pca2[:, 1], s=6, c=y_pred_pca, alpha=0.85)
+        ax.set_title(f"{ds} | PCA -> KMeans (k={n_clusters})")
+        ax.set_xticks([])
+        ax.set_yticks([])
+        ax.grid(True, alpha=0.15)
 
-            ax.scatter(X_2d[:, 0], X_2d[:, 1], s=6, c=y_pred, alpha=0.85)
-            ax.set_title(f"{ds} | {dimred.upper()} -> KMeans (k={n_clusters})")
-            ax.set_xticks([])
-            ax.set_yticks([])
-            ax.grid(True, alpha=0.15)
+        # --- Col 3: UMAP + KMeans ---
+        ax = axes[r][2]
+        ax.scatter(umap2[:, 0], umap2[:, 1], s=6, c=y_pred_umap, alpha=0.85)
+        ax.set_title(f"{ds} | UMAP -> KMeans (k={n_clusters})")
+        ax.set_xticks([])
+        ax.set_yticks([])
+        ax.grid(True, alpha=0.15)
 
-    fig.suptitle("Cluster visualization after PCA/UMAP (2D) + KMeans", fontsize=14)
+    fig.suptitle("Ground Truth vs PCA/UMAP + KMeans (2D scatter)", fontsize=14)
     fig.tight_layout(rect=[0, 0, 1, 0.96])
     fig.savefig(out_path, dpi=250)
     plt.close(fig)
