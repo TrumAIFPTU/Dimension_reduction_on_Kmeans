@@ -1,4 +1,5 @@
 import umap
+from sklearn.decomposition import PCA
 
 def make_umap(n_components, n_neighbors=15, min_dist=0.1, metric="euclidean",
               random_state=None, n_jobs=-1):
@@ -10,3 +11,6 @@ def make_umap(n_components, n_neighbors=15, min_dist=0.1, metric="euclidean",
         random_state=random_state,  # None => cho phép parallel
         n_jobs=n_jobs
     )
+
+def make_pca(n_components: int, random_state: int = 42):
+    return PCA(n_components=n_components, random_state=random_state)

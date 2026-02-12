@@ -1,42 +1,55 @@
 from pathlib import Path
 import pandas as pd
+import numpy as np
 import matplotlib.pyplot as plt
+from sklearn.preprocessing import StandardScaler
 
 from src.utils.seed import set_seed
-from src.datasets.mnist import load_mnist
-from src.datasets.fashion_mnist import load_fashion_mnist
-from src.datasets.swiss_roll import load_swiss_roll
-from src.datasets.blobs_linear import load_blobs_linear
+from initialize.data import load_mnist_images
+from initialize.data import load_fashion_mnist_images
+from initialize.dimred import make_pca
+from initialize.dimred import make_umap
+from initialize.kmeans import make_kmeans
 
-from src.dimred.pca import make_pca
-from src.dimred.umap import make_umap
-from src.clustering.kmeans import make_kmeans
+from src.image.preprocess import preprocess_and_sharpen
+from src.image.features import extract_feature_matrix
+
 from src.evaluation.metrics import compute_metrics
 from src.evaluation.timer import timer
 
 
-def _load_dataset(dataset: str, n_samples: int, n_clusters: int, seed: int,
-                  blobs_n_features: int = 50, blobs_cluster_std: float = 1.0):
+def _load_dataset(
+    dataset: str,
+    n_samples: int,
+    n_clusters: int,
+    seed: int,
+    kernel_mode: str = "sharp",#fixed
+    # image feature params
+    hog_orientations: int = 9,
+    hog_pixels_per_cell: int = 4,
+    hog_cells_per_block: int = 2,
+):
     if dataset == "mnist":
-        return load_mnist(n_samples, seed)
+        X_img, y = load_mnist_images(n_samples, seed)
+    elif dataset == "fashion_mnist":
+        X_img, y = load_fashion_mnist_images(n_samples, seed)
+    else:
+        raise ValueError(f"Unknown dataset: {dataset}")
 
-    if dataset == "fashion_mnist":
-        return load_fashion_mnist(n_samples, seed)
-
-    if dataset == "swiss_roll":
-        # y_true được tạo bằng binning (0..K-1)
-        return load_swiss_roll(n_samples, n_clusters, seed)
-
-    if dataset == "blobs_linear":
-        return load_blobs_linear(
-            n_samples=n_samples,
-            n_features=blobs_n_features,
-            n_clusters=n_clusters,
-            random_state=seed,
-            cluster_std=blobs_cluster_std
+    if kernel_mode.lower() != "sharp": #Optional decision for selection
+        raise ValueError(
+            "Hiện pipeline ảnh trong project này cố định kernel_mode='sharp', nếu muốn smooth thì tự viết ma trận<3 "
         )
 
-    raise ValueError(f"Unknown dataset: {dataset}")
+    X01 = preprocess_and_sharpen(X_img)
+    X = extract_feature_matrix(
+        X01,
+        hog_orientations=hog_orientations,
+        hog_pixels_per_cell=hog_pixels_per_cell,
+        hog_cells_per_block=hog_cells_per_block,
+    )
+    X = StandardScaler().fit_transform(X).astype(np.float32)
+    return X, y.astype(int)
 
 
 def _make_dimred(dimred: str, d: int, seed: int,
@@ -50,7 +63,7 @@ def _make_dimred(dimred: str, d: int, seed: int,
             n_neighbors=umap_n_neighbors,
             min_dist=umap_min_dist,
             metric=umap_metric,
-            random_state=None,  # để chạy parallel, tránh warning do seed
+            random_state=None,  #Run parralell for avoiding seed warning
             n_jobs=-1
         )
 
@@ -67,19 +80,12 @@ def _plot_metric_vs_d(df_sum: pd.DataFrame, dataset: str, dimred: str, metric: s
     plt.tight_layout()
     plt.savefig(out_path, dpi=200)
     plt.close()
-    Nếu vẫn muốn xuất từng plot riêng thì bỏ comment đoạn này
-
+    #Nếu vẫn muốn xuất từng plot riêng thì bỏ comment đoạn này
 """
 # ================================================================================================================
 
 
 def plot_all_subplots(df_sum: pd.DataFrame, out_path: Path):
-    """
-    1 figure lớn:
-    - Cột: mỗi dataset
-    - Hàng: mỗi metric
-    - Trong mỗi ô: các đường theo dimred (PCA/UMAP) theo d
-    """
     metrics = ["silhouette", "ari", "nmi", "time_total_sec"]
     datasets = sorted(df_sum["dataset"].unique().tolist())
     dimreds = sorted(df_sum["dimred"].unique().tolist())
@@ -112,17 +118,7 @@ def plot_all_subplots(df_sum: pd.DataFrame, out_path: Path):
                 if sub.empty:
                     continue
                 ax.plot(sub["d"], sub[f"{metric}_mean"], marker="o", label=dimred.upper())
-            display_name = dataset
-            if dataset == "blobs_linear":
-                display_name = "linear"
-            elif dataset == "fashion_mnist":
-                display_name = "nlinearmed"
-            elif dataset == "mnist":
-                display_name = "nlinearlow"
-            elif dataset == "swiss_roll":
-                display_name = "nlinearhigh"
-
-            ax.set_title(f"{display_name} | {metric}")
+            ax.set_title(f"{dataset} | {metric}")
             ax.set_xlabel("dimension")
             ax.set_ylabel(metric)
             ax.grid(True, alpha=0.3)
@@ -136,9 +132,9 @@ def plot_all_subplots(df_sum: pd.DataFrame, out_path: Path):
     plt.close(fig)
 
 
-def plot_cluster_scatter_4datasets(
+def plot_cluster_scatter_2datasets(
     out_path: Path,
-    datasets=("blobs_linear", "mnist", "fashion_mnist", "swiss_roll"),
+    datasets=("mnist", "fashion_mnist"),
     n_samples_map=None,
     n_clusters_map=None,
     seed: int = 42,
@@ -146,30 +142,21 @@ def plot_cluster_scatter_4datasets(
     umap_n_neighbors: int = 15,
     umap_min_dist: float = 0.1,
     umap_metric: str = "euclidean",
-    # Blobs params
-    blobs_n_features: int = 50,
-    blobs_cluster_std: float = 1.0,
+    # image feature params
+    hog_orientations: int = 9,
+    hog_pixels_per_cell: int = 4,
+    hog_cells_per_block: int = 2,
 ):
     """
     Vẽ scatter 3 cột cho mỗi dataset:
-    [Ground Truth | PCA -> KMeans | UMAP -> KMeans]
-    - Giảm chiều về 2D để vẽ.
-    - Cột 1 tô theo y_true, cột 2-3 tô theo y_pred (KMeans).
+    [Ground Truth (PCA 2D) | PCA->KMeans | UMAP->KMeans]
+    X đã được chuẩn hóa thành ma trận đặc trưng không còn là pixel thô nên có thể
+    trực quan hóa scatter 2D đc
     """
     if n_samples_map is None:
-        n_samples_map = {
-            "blobs_linear": 4000,
-            "mnist": 4000,
-            "fashion_mnist": 4000,
-            "swiss_roll": 4000,
-        }
+        n_samples_map = {"mnist": 4000, "fashion_mnist": 4000}
     if n_clusters_map is None:
-        n_clusters_map = {
-            "blobs_linear": 10,
-            "mnist": 10,
-            "fashion_mnist": 10,
-            "swiss_roll": 10,
-        }
+        n_clusters_map = {"mnist": 10, "fashion_mnist": 10}
 
     cols = ["GT", "PCA+KMeans", "UMAP+KMeans"]
     nrows = len(datasets)
@@ -195,8 +182,9 @@ def plot_cluster_scatter_4datasets(
             n_samples=n_samples,
             n_clusters=n_clusters,
             seed=seed,
-            blobs_n_features=blobs_n_features,
-            blobs_cluster_std=blobs_cluster_std
+            hog_orientations=hog_orientations,
+            hog_pixels_per_cell=hog_pixels_per_cell,
+            hog_cells_per_block=hog_cells_per_block,
         )
 
         # 2D embeddings (để GT cũng vẽ trên cùng “mặt phẳng” so sánh được)
@@ -214,10 +202,10 @@ def plot_cluster_scatter_4datasets(
         y_pred_pca = make_kmeans(n_clusters, seed).fit_predict(pca2)
         y_pred_umap = make_kmeans(n_clusters, seed).fit_predict(umap2)
 
-        # --- Col 1: Ground Truth (vẽ trên PCA space cho dễ so sánh) ---
+        # --- Col 1: Ground Truth (PCA2) ---
         ax = axes[r][0]
         ax.scatter(pca2[:, 0], pca2[:, 1], s=6, c=y_true, alpha=0.85)
-        ax.set_title(f"{ds} | GT (on PCA 2D)")
+        ax.set_title(f"{ds} | GT (PCA2)")
         ax.set_xticks([])
         ax.set_yticks([])
         ax.grid(True, alpha=0.15)
@@ -238,16 +226,29 @@ def plot_cluster_scatter_4datasets(
         ax.set_yticks([])
         ax.grid(True, alpha=0.15)
 
-    fig.suptitle("Ground Truth vs PCA/UMAP + KMeans (2D scatter)", fontsize=14)
+    fig.suptitle("Ground Truth (PCA2) vs PCA/UMAP + KMeans (2D scatter)", fontsize=14)
     fig.tight_layout(rect=[0, 0, 1, 0.96])
     fig.savefig(out_path, dpi=250)
     plt.close(fig)
 
 
-def run_one(dataset: str, dimred: str, n_samples: int, d: int, n_clusters: int,
-            seed: int,
-            umap_n_neighbors: int, umap_min_dist: float, umap_metric: str,
-            blobs_n_features: int, blobs_cluster_std: float):
+def run_one(
+    dataset: str,
+    dimred: str,
+    n_samples: int,
+    d: int,
+    n_clusters: int,
+    seed: int,
+    # image pipeline
+    kernel_mode: str,
+    hog_orientations: int,
+    hog_pixels_per_cell: int,
+    hog_cells_per_block: int,
+    # UMAP params
+    umap_n_neighbors: int,
+    umap_min_dist: float,
+    umap_metric: str,
+):
     set_seed(seed)
 
     X, y_true = _load_dataset(
@@ -255,8 +256,10 @@ def run_one(dataset: str, dimred: str, n_samples: int, d: int, n_clusters: int,
         n_samples=n_samples,
         n_clusters=n_clusters,
         seed=seed,
-        blobs_n_features=blobs_n_features,
-        blobs_cluster_std=blobs_cluster_std
+        kernel_mode=kernel_mode,
+        hog_orientations=hog_orientations,
+        hog_pixels_per_cell=hog_pixels_per_cell,
+        hog_cells_per_block=hog_cells_per_block,
     )
 
     dr = _make_dimred(dimred, d, seed, umap_n_neighbors, umap_min_dist, umap_metric)
@@ -300,8 +303,10 @@ def run_all_sweeps(cfgs, out_dir: Path):
             n_samples=cfg.n_samples,
             n_clusters=cfg.n_clusters,
             seed=cfg.seeds[0],
-            blobs_n_features=cfg.blobs_n_features,
-            blobs_cluster_std=cfg.blobs_cluster_std
+            kernel_mode=cfg.kernel_mode,
+            hog_orientations=cfg.hog_orientations,
+            hog_pixels_per_cell=cfg.hog_pixels_per_cell,
+            hog_cells_per_block=cfg.hog_cells_per_block,
         )
         max_d = min(X0.shape[0], X0.shape[1])
         dims = [d for d in cfg.dims if d <= max_d]
@@ -316,11 +321,13 @@ def run_all_sweeps(cfgs, out_dir: Path):
                         d=d,
                         n_clusters=cfg.n_clusters,
                         seed=seed,
+                        kernel_mode=cfg.kernel_mode,
+                        hog_orientations=cfg.hog_orientations,
+                        hog_pixels_per_cell=cfg.hog_pixels_per_cell,
+                        hog_cells_per_block=cfg.hog_cells_per_block,
                         umap_n_neighbors=cfg.umap_n_neighbors,
                         umap_min_dist=cfg.umap_min_dist,
                         umap_metric=cfg.umap_metric,
-                        blobs_n_features=cfg.blobs_n_features,
-                        blobs_cluster_std=cfg.blobs_cluster_std
                     )
                 )
 
@@ -344,23 +351,10 @@ def run_all_sweeps(cfgs, out_dir: Path):
     })
     df_sum.to_csv(out_dir / "results_summary.csv", index=False)
 
-    #Plot tổng hợp metrics vs d (1 file)
+    # Plot tổng hợp metrics vs d (1 file)
     plot_all_subplots(df_sum, out_dir / "figures" / "ALL_PLOTS_SUBPLOTS.png")
 
-    #Plot scatter phân cụm sau PCA/UMAP cho 4 dataset (1 file)
-    plot_cluster_scatter_4datasets(out_dir / "figures" / "CLUSTERS_4DATASETS_PCA_UMAP.png")
-
-    """
-    for (dataset, dimred) in df_sum[["dataset", "dimred"]].drop_duplicates().itertuples(index=False):
-        for metric in ["silhouette", "ari", "nmi", "time_total_sec"]:
-            _plot_metric_vs_d(
-                df_sum,
-                dataset=dataset,
-                dimred=dimred,
-                metric=metric,
-                out_path=out_dir / "figures" / f"{dataset}_{dimred}_{metric}_vs_d.png"
-            )
-    Nếu vẫn muốn xuất từng plot riêng thì bỏ comment đoạn này
-    """
+    # Plot scatter phân cụm (MNIST & Fashion-MNIST)
+    plot_cluster_scatter_2datasets(out_dir / "figures" / "CLUSTERS_2DATASETS_PCA_UMAP.png")
 
     return df_detail, df_sum

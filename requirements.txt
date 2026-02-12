@@ -1,5 +1,7 @@
 numpy
 pandas
 scikit-learn
+scikit-image
+tensorflow
 matplotlib
 umap-learn
