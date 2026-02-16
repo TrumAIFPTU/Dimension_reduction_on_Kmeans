@@ -3,7 +3,7 @@ from typing import List
 
 @dataclass(frozen=True)
 class SweepConfig:
-    dataset: str              # "blobs_linear" | "mnist" | "fashion_mnist" | "swiss_roll"
+    dataset: str              # "mnist" | "fashion_mnist"
     dimred: str               # "pca" | "umap"
     n_samples: int
     dims: List[int]
