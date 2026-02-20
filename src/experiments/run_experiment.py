@@ -6,6 +6,7 @@ from sklearn.preprocessing import StandardScaler
 from src.utils.seed import set_seed
 from src.initialize.data import load_mnist_images
 from src.initialize.data import load_fashion_mnist_images
+from src.initialize.noise import add_SaltPeper_noise
 from src.initialize.dimred import make_pca
 from src.initialize.dimred import make_umap
 from src.initialize.kmeans import make_kmeans
@@ -26,6 +27,7 @@ def _load_dataset(
     seed: int,
     pipeline: str = "sharpen_hog",
     kernel_mode: str = "sharp",#fixed
+    sp_amount: float = 0.0,
     # image feature params
     hog_orientations: int = 9,
     hog_pixels_per_cell: int = 4,
@@ -37,6 +39,8 @@ def _load_dataset(
         X_img, y = load_fashion_mnist_images(n_samples, seed)
     else:
         raise ValueError(f"Unknown dataset: {dataset}")
+
+    X_img = add_SaltPeper_noise(X_img, amount=sp_amount, seed=seed)
 
     if pipeline == "raw":
         X01 = X_img.astype(np.float32) / 255.0
@@ -80,6 +84,7 @@ def run_one(
     n_clusters: int,
     seed: int,
     pipeline: str,
+    sp_amount: float,
     # image pipeline
     kernel_mode: str,
     hog_orientations: int,
@@ -98,6 +103,7 @@ def run_one(
         n_clusters=n_clusters,
         seed=seed,
         pipeline=pipeline,
+        sp_amount=sp_amount,
         kernel_mode=kernel_mode,
         hog_orientations=hog_orientations,
         hog_pixels_per_cell=hog_pixels_per_cell,
@@ -126,6 +132,7 @@ def run_one(
         "n_clusters": n_clusters,
         "seed": seed,
         "pipeline": pipeline,
+        "sp_amount": sp_amount,
         "silhouette": m["silhouette"],
         "ari": m["ari"],
         "nmi": m["nmi"],
@@ -154,6 +161,7 @@ def run_all_sweeps(cfgs, out_dir: Path):
         )
         max_d = min(X0.shape[0], X0.shape[1])# Lọc dims hợp lệ cho PCA: d <= min(n_samples, n_features)
         dims = [d for d in cfg.dims if d <= max_d]
+        _sp_amount = 0.05 #Độ nhiễu 5%
 
         for pipeline in ["raw", "sharpen_hog"]:
             for d in dims:
@@ -167,6 +175,7 @@ def run_all_sweeps(cfgs, out_dir: Path):
                             n_clusters=cfg.n_clusters,
                             seed=seed,
                             pipeline=pipeline,
+                            sp_amount= _sp_amount,
                             kernel_mode=cfg.kernel_mode,
                             hog_orientations=cfg.hog_orientations,
                             hog_pixels_per_cell=cfg.hog_pixels_per_cell,
@@ -183,7 +192,7 @@ def run_all_sweeps(cfgs, out_dir: Path):
     agg_cols = ["silhouette", "ari", "nmi", "time_total_sec", "time_dimred_sec", "time_kmeans_sec"]
     df_sum = (
         df_detail
-        .groupby(["dataset","pipeline" , "dimred", "d", "n_samples", "n_clusters"], as_index=False)[agg_cols]
+        .groupby(["dataset","pipeline","sp_amount", "dimred", "d", "n_samples", "n_clusters"], as_index=False)[agg_cols]
         .agg(["mean", "std"])
     )
 

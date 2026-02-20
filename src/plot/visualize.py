@@ -73,7 +73,7 @@ def plot_cluster_scatter_2datasets(
     if n_clusters_map is None:
         n_clusters_map = {"mnist": 10, "fashion_mnist": 10}
 
-    cols = ["GT", "PCA+KMeans", "UMAP+KMeans"]
+    cols = ["PCA+KMeans", "UMAP+KMeans"]
     nrows = len(datasets)
     ncols = len(cols)
 
@@ -114,18 +114,12 @@ def plot_cluster_scatter_2datasets(
         y_pred_umap = make_kmeans_fn(n_clusters, seed).fit_predict(umap2)
 
         ax = axes[r][0]
-        ax.scatter(pca2[:, 0], pca2[:, 1], s=6, c=y_true, alpha=0.85)
-        ax.set_title(f"{ds} | GT (PCA2)")
-        ax.set_xticks([]); ax.set_yticks([])
-        ax.grid(True, alpha=0.15)
-
-        ax = axes[r][1]
         ax.scatter(pca2[:, 0], pca2[:, 1], s=6, c=y_pred_pca, alpha=0.85)
         ax.set_title(f"{ds} | PCA -> KMeans (k={n_clusters})")
         ax.set_xticks([]); ax.set_yticks([])
         ax.grid(True, alpha=0.15)
 
-        ax = axes[r][2]
+        ax = axes[r][1]
         ax.scatter(umap2[:, 0], umap2[:, 1], s=6, c=y_pred_umap, alpha=0.85)
         ax.set_title(f"{ds} | UMAP -> KMeans (k={n_clusters})")
         ax.set_xticks([]); ax.set_yticks([])
